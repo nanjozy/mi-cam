@@ -71,7 +71,7 @@ async def run():
     #     return
     logger.info(device_info)
     # 创建音频 FIFO
-    audio_fifo = os.path.join(tempfile.gettempdir(), "camera_audio.fifo")
+    audio_fifo = os.path.join("tmp", "camera_audio.fifo")
     try:
         os.unlink(audio_fifo)
     except FileNotFoundError:
@@ -140,9 +140,13 @@ async def run():
                 "-v",
                 "error",
                 "-hide_banner",
+                "-fflags", "nobuffer",       # 关键：减少输入缓冲，降低延迟
+    "-flags", "low_delay",       # 告诉解码器/解复用器这是一个低延迟流
                 # 视频输入 - 使用系统时钟作为时间戳
                 "-use_wallclock_as_timestamps",
                 "1",
+                '-analyzeduration', '10000',  # 20 seconds
+                '-probesize', '10000',  # 20 MB
                 "-thread_queue_size",
                 "512",
                 "-fflags",
@@ -159,7 +163,7 @@ async def run():
                 "-f",
                 "s16le",
                 "-ar",
-                "16000",
+                "8000",
                 "-ac",
                 "1",
                 "-i",
@@ -174,16 +178,19 @@ async def run():
                 "copy",
                 "-c:a",
                 "aac",
+                "-b:a", "64k",
                 "-ar",
                 "16000",
                 # 音频时间戳修复
                 "-af",
-                "aresample=async=1:first_pts=0",
+                "aresample=async=1000",
+                # "aresample=async=1:first_pts=0",
                 # 输出
                 "-f",
                 "rtsp",
                 "-rtsp_transport",
                 "tcp",
+                "-max_delay", "100000",
                 RTSP_URL,
                 stdin=PIPE,
             )
