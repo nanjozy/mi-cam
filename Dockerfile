@@ -23,7 +23,8 @@ RUN python -m venv .venv;\
 
 COPY . /app/
 
-RUN chmod +x /app/run.bash;
+RUN chmod +x /app/run.bash;\
+    touch /app/.env;
 
 ARG ARG_VERSION=0.0.0
 ENV VERSION=${ARG_VERSION} \

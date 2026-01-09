@@ -21,9 +21,13 @@ from av.packet import Packet
 from av.video.codeccontext import VideoCodecContext
 from av.video.frame import VideoFrame
 from PIL import Image
-
+from micam_patch.audiocodec import G711ADecoder
 from miloco_sdk.utils.error import MIoTMediaDecoderError
-from miloco_sdk.utils.types import MIoTCameraCodec, MIoTCameraFrameData, MIoTCameraFrameType
+from miloco_sdk.utils.types import (
+    MIoTCameraCodec,
+    MIoTCameraFrameData,
+    MIoTCameraFrameType,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,7 +53,10 @@ class MIoTMediaRingBuffer:
                 if item.frame_type == MIoTCameraFrameType.FRAME_I:
                     removed: bool = False
                     for i in range(len(self._video_buffer)):
-                        if self._video_buffer[i].frame_type != MIoTCameraFrameType.FRAME_I:
+                        if (
+                            self._video_buffer[i].frame_type
+                            != MIoTCameraFrameType.FRAME_I
+                        ):
                             del self._video_buffer[i]
                             removed = True
                             break
@@ -139,7 +146,9 @@ class MIoTMediaDecoder(threading.Thread):
         self._video_callback = video_callback
         if enable_audio:
             if not audio_callback:
-                raise MIoTMediaDecoderError("audio_callback is required when enable audio")
+                raise MIoTMediaDecoderError(
+                    "audio_callback is required when enable audio"
+                )
             else:
                 self._audio_callback = audio_callback
 
@@ -155,7 +164,10 @@ class MIoTMediaDecoder(threading.Thread):
         self._running = True
         while self._running:
             try:
-                self._queue.step(on_video_frame=self._on_video_callback, on_audio_frame=self._on_audio_callback)
+                self._queue.step(
+                    on_video_frame=self._on_video_callback,
+                    on_audio_frame=self._on_audio_callback,
+                )
             except Exception as e:  # pylint: disable=broad-except
                 _LOGGER.error("frame data handle error, %s", e)
                 if self._main_loop.is_closed():
@@ -179,7 +191,11 @@ class MIoTMediaDecoder(threading.Thread):
     def detect_hwaccel(self):
         try:
             result = subprocess.run(
-                ["ffmpeg", "-hwaccels"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True
+                ["ffmpeg", "-hwaccels"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True,
             )
             hw_list = result.stdout.strip().split("\n")[1:]
             return hw_list
@@ -216,7 +232,10 @@ class MIoTMediaDecoder(threading.Thread):
             img.save(buf, format="JPEG", quality=90)
             jpeg_data = buf.getvalue()
             self._main_loop.call_soon_threadsafe(
-                self._main_loop.create_task, self._video_callback(jpeg_data, frame_data.timestamp, frame_data.channel)
+                self._main_loop.create_task,
+                self._video_callback(
+                    jpeg_data, frame_data.timestamp, frame_data.channel
+                ),
             )
             self._last_jpeg_ts = now_ts
 
@@ -225,7 +244,12 @@ class MIoTMediaDecoder(threading.Thread):
             # Create audio decoder
             if frame_data.codec_id == MIoTCameraCodec.AUDIO_OPUS:
                 self._audio_decoder = AudioCodecContext.create("opus", "r")
+            elif frame_data.codec_id == MIoTCameraCodec.AUDIO_G711A:
+                self._audio_decoder = G711ADecoder(sample_rate=8000, channels=0)
+            else:
+                print("frame_data", frame_data)
             self._resampler = AudioResampler(format="s16", layout="mono", rate=16000)
+
             # _LOGGER.info("audio decoder created, %s", frame_data.codec_id)
         pkt = Packet(frame_data.data)
         frames: List[AudioFrame] = self._audio_decoder.decode(pkt)  # type: ignore
@@ -235,7 +259,8 @@ class MIoTMediaDecoder(threading.Thread):
             for rs_frame in rs_frames:
                 pcm_bytes += rs_frame.to_ndarray().tobytes()
         self._main_loop.call_soon_threadsafe(
-            self._main_loop.create_task, self._audio_callback(pcm_bytes, frame_data.timestamp, frame_data.channel)
+            self._main_loop.create_task,
+            self._audio_callback(pcm_bytes, frame_data.timestamp, frame_data.channel),
         )
 
 

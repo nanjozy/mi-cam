@@ -1,3 +1,4 @@
+from micam_patch.logger import logger as _
 import asyncio
 import os
 import tempfile
@@ -6,7 +7,9 @@ from loguru import logger
 from miloco_sdk import XiaomiClient
 from miloco_sdk.cli.utils import get_auth_info, print_device_list
 from miloco_sdk.utils.types import MIoTCameraVideoQuality
+from dotenv import load_dotenv
 
+load_dotenv()
 # RTSP 服务器地址
 RTSP_URL = os.getenv("RTSP_URL", "rtsp://")
 DEVICE_NAME = os.getenv("DEVICE_NAME", "")
@@ -106,8 +109,8 @@ async def run():
         if audio_file:
             try:
                 audio_file.write(data)
-                if audio_frame_count % 200 == 0:
-                    logger.debug(f"音频推流中... 第 {audio_frame_count} 帧")
+                # if audio_frame_count % 200 == 0:
+                #     logger.debug(f"音频推流中... 第 {audio_frame_count} 帧")
             except BrokenPipeError:
                 pass
             except Exception as e:
@@ -133,9 +136,10 @@ async def run():
             # 启动 ffmpeg
             ffmpeg_proc = await create_subprocess_exec(
                 "ffmpeg",
+                "-y",
+                "-v",
+                "error",
                 "-hide_banner",
-                "-loglevel",
-                "info",
                 # 视频输入 - 使用系统时钟作为时间戳
                 "-use_wallclock_as_timestamps",
                 "1",
@@ -187,10 +191,10 @@ async def run():
         if ffmpeg_proc and ffmpeg_proc.stdin and not ffmpeg_proc.stdin.is_closing():
             try:
                 ffmpeg_proc.stdin.write(data)
-                if frame_count % 100 == 0:
-                    logger.debug(
-                        f"视频推流中... 第 {frame_count} 帧, 音频 {audio_frame_count} 帧"
-                    )
+                # if frame_count % 100 == 0:
+                #     logger.debug(
+                #         f"视频推流中... 第 {frame_count} 帧, 音频 {audio_frame_count} 帧"
+                #     )
             except Exception:
                 pass
 
