@@ -1,27 +1,36 @@
-FROM python:3.12-slim
+FROM python:3.12-bookworm
 
-ENV LANG=C.UTF-8 TZ=Asia/Shanghai
-
-MAINTAINER dairoot
+ENV LANG=C.UTF-8 \
+    TZ=Asia/Shanghai
 
 WORKDIR /app
 
-# 更新源
-RUN sed -i "s@http://deb.debian.org@https://mirrors.163.com@g" /etc/apt/sources.list.d/debian.sources
+RUN echo "deb http://ftp.cn.debian.org/debian sid main" >> /etc/apt/sources.list;\
+    apt-get update; \
+    apt-get install -y --no-install-recommends iputils-ping bash tini; \
+    apt-get install -y --no-install-recommends ffmpeg;\
+    ffmpeg -version; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*;
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends iputils-ping && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+COPY ./pyproject.toml /app/pyproject.toml
 
+RUN pip install -U pip --no-cache; \
+    pip install poetry --no-cache; \
+    poetry install --no-root; \
+    pip cache purge;
 
-ENV PIP_INDEX_URL=https://mirrors.tencent.com/pypi/simple
-ENV PIP_TRUSTED_HOST=mirrors.tencent.com
+COPY . /app/
 
-COPY . .
+RUN chmod +x /app/run.bash;
 
-RUN  pip install -U pip && pip install -e .
+ARG ARG_VERSION=0.0.0
+ENV VERSION=${ARG_VERSION} \
+    RTSP_URL="rtsp://" \
+    DEVICE_NAME=""
 
-# 运行命令
-# docker build -t miloco-sdk .
-# docker run -it --network bridge -v $(pwd):/app miloco-sdk bash
+VOLUME /app/data
+
+ENTRYPOINT [ "tini","--","/app/run.bash" ]
+
+CMD [ "main" ]

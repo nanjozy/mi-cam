@@ -8,5 +8,10 @@ camera.jpg
 mediamtx.yml
 .venv
 poetry.lock
+.venv
 .env
+.pre-commit-config.yaml
+data
+examples
+tests
 build.bash
