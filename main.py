@@ -16,29 +16,78 @@ DEVICE_NAME = os.getenv("DEVICE_NAME", "")
 
 
 def detect_keyframe_and_codec(data: bytes) -> tuple[bool, str]:
-    """检测关键帧和 codec 类型，返回 (is_keyframe, codec)"""
-    i = 0
-    while i < len(data) - 5:
-        # 查找 NAL 起始码
-        if data[i : i + 3] == b"\x00\x00\x01":
-            header = data[i + 3]
-            i += 3
-        elif data[i : i + 4] == b"\x00\x00\x00\x01":
-            header = data[i + 4]
-            i += 4
-        else:
-            i += 1
+    """
+    检测关键帧和 codec 类型。
+    注意：单帧数据极难 100% 准确区分 H.264/H.265，因为 NALU type 存在数值重叠。
+    此函数采用优先匹配确信度高的类型策略。
+    """
+    start = 0
+    max_len = len(data)
+    
+    # 只要还能找到起始码前缀
+    while start < max_len:
+        # 1. 快速查找起始码 (00 00 01)
+        # H.264/H.265 起始码可能是 00 00 01 或 00 00 00 01
+        # find 只能找固定的，我们找 00 00 01，它能兼容两种情况
+        pos = data.find(b"\x00\x00\x01", start)
+        if pos == -1:
+            break
+            
+        # 确定 NAL Unit Header 的位置
+        # pos 是 00 00 01 的位置，header 在 pos + 3
+        header_pos = pos + 3
+        
+        # 越界检查
+        if header_pos >= max_len:
+            break
+            
+        header = data[header_pos]
+        
+        # 移动 start 到下一次查找的位置 (避免死循环)
+        start = header_pos + 1
+
+        # 2. 校验 Forbidden Zero Bit (Bit 0 必须为 0)
+        # 如果是 1，说明可能找错了位置，或者是坏数据
+        if header & 0x80 != 0:
             continue
 
+        # 3. 解析类型
+        # H.264: 后 5 位
         h264_type = header & 0x1F
+        # H.265: 中间 6 位
         h265_type = (header >> 1) & 0x3F
 
-        # H265: VPS=32, SPS=33, PPS=34, IDR=19/20
-        if h265_type in (19, 20, 32, 33, 34):
+        # --- 判定逻辑 (优先级非常重要) ---
+
+        # [HEVC] 强特征：VPS (32)
+        # H.264 没有 type 32 (5 bit 最大 31)，所以如果算出 32，必是 HEVC
+        if h265_type == 32:
             return True, "hevc"
-        # H264: SPS=7, PPS=8, IDR=5
-        if h264_type in (5, 7, 8):
+
+        # [H.264] 强特征：SPS (7), PPS (8)
+        # 需要排除这些数值在 HEVC 下被误判为特殊帧的可能
+        # H.264 SPS(7) -> hex 07/27/47/67... 
+        #   0x67 (0110 0111) -> HEVC: (0x67>>1)&0x3F = 51 (未知/保留) -> 安全
+        #   0x27 (0010 0111) -> HEVC: 19 (IDR) -> **冲突风险**
+        # 但通常 SPS/PPS 会伴随 IDR 出现，我们优先返回 SPS/PPS 判定
+        if h264_type in (7, 8):
             return True, "h264"
+        
+        # [HEVC] SPS (33), PPS (34)
+        if h265_type in (33, 34):
+            return True, "hevc"
+
+        # [HEVC] IDR (19, 20)
+        if h265_type in (19, 20):
+            # 这里存在严重歧义，H.264 的某些非关键帧字节可能算出 19/20
+            # 仅凭一个字节很难断定，但如果确实需要返回，倾向于认为是 HEVC IDR
+            return True, "hevc"
+
+        # [H.264] IDR (5)
+        if h264_type == 5:
+            return True, "h264"
+            
+    # 如果遍历完所有 NALU 都没找到关键帧特征
     return False, "unknown"
 
 
@@ -176,6 +225,7 @@ async def run():
                 # 编码
                 "-c:v",
                 "copy",
+                # "-bsf:v", "hevc_mp4toannexb",
                 "-c:a",
                 "aac",
                 "-b:a", "64k",

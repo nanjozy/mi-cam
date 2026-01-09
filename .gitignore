@@ -10,3 +10,4 @@ mediamtx.yml
 poetry.lock
 .env
 build.bash
+tmp
