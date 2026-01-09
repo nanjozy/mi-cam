@@ -15,10 +15,11 @@ RUN echo "deb http://ftp.cn.debian.org/debian sid main" >> /etc/apt/sources.list
 
 COPY ./pyproject.toml /app/pyproject.toml
 
-RUN pip install -U pip --no-cache; \
-    pip install poetry --no-cache; \
-    poetry install --no-root; \
-    pip cache purge;
+RUN python -m venv .venv;\
+    /app/.venv/bin/pip install -U pip --no-cache; \
+    /app/.venv/bin/pip install poetry --no-cache; \
+    /app/.venv/bin/poetry install --no-root; \
+    /app/.venv/bin/pip cache purge;
 
 COPY . /app/
 
