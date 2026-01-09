@@ -1,7 +1,6 @@
 set -eu
-source /app/.venv/bin/activate
 
-echo "python main.py"
-python main.py
+echo "/app/.venv/bin/python main.py"
+/app/.venv/bin/python main.py
 
 
