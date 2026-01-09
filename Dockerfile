@@ -32,5 +32,3 @@ ENV VERSION=${ARG_VERSION} \
 VOLUME /app/data
 
 ENTRYPOINT [ "tini","--","/app/run.bash" ]
-
-CMD [ "main" ]
