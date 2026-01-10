@@ -1,4 +1,4 @@
-FROM python:3.12-bookworm
+FROM python:3.12-slim-bookworm
 
 ENV LANG=C.UTF-8 \
     TZ=Asia/Shanghai
