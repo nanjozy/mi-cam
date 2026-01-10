@@ -32,7 +32,8 @@ ENV VERSION=${ARG_VERSION} \
     RTSP_URL="rtsp://" \
     DEVICE_NAME="" \
     CODEC_FIX="0" \
-    HWACC="0"
+    HWACC="0" \
+    LIBVA_DRIVER_NAME="iHD"
 
 VOLUME /app/data
 

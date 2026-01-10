@@ -17,21 +17,6 @@ from miot.const import OAUTH2_CLIENT_ID
 PROJECT_CODE: str = "mico"
 
 
-def _check_system_support():
-    """检查系统是否支持，仅支持 macOS、Linux 和 Windows (WSL)"""
-    if platform.system() == "Windows":
-        print(
-            "不支持原生 Windows 系统。\n"
-            "本 SDK 仅支持以下系统：\n"
-            "  - macOS\n"
-            "  - Linux\n"
-            "  - Windows (WSL - Windows Subsystem for Linux)\n"
-            "\n"
-            "如果您在 Windows 上使用，请通过 WSL 运行。"
-        )
-        exit(1)
-
-
 def _is_api_endpoint(obj):
     return isinstance(obj, BaseApi)
 
@@ -54,8 +39,6 @@ class XiaomiClient:
         self._access_token = access_token
 
     def __init__(self, access_token: Optional[str] = None):
-        # 检查系统支持
-        _check_system_support()
 
         self.client_id = OAUTH2_CLIENT_ID
         self._device_id = f"{PROJECT_CODE}.{get_device_id()}"

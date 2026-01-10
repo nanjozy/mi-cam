@@ -4,6 +4,7 @@ from miloco_sdk.base import BaseApi
 from miot.client import MIoTClient
 from miloco_sdk.utils.const import MICO_REDIRECT_URI
 from miot.types import MIoTCameraVideoQuality, MIoTOauthInfo
+from loguru import logger
 
 
 class MIoTCameraStream(BaseApi):
@@ -16,11 +17,15 @@ class MIoTCameraStream(BaseApi):
         on_decode_jpg_callback=None,
         on_raw_audio_callback=None,
         on_decode_pcm_callback=None,
-        video_quality=MIoTCameraVideoQuality.HIGH # 清晰度， 默认 LOW，可改成 HIGH
+        video_quality=MIoTCameraVideoQuality.HIGH,  # 清晰度， 默认 LOW，可改成 HIGH
     ) -> None:
         """从小米云端获取并打印摄像头原始视频流信息。"""
         # 解析 oauth_info
-        oauth_dict = {"access_token": self._client._access_token, "refresh_token": "", "expires_ts": 0}
+        oauth_dict = {
+            "access_token": self._client._access_token,
+            "refresh_token": "",
+            "expires_ts": 0,
+        }
         oauth_info = MIoTOauthInfo(**oauth_dict)
 
         # 初始化 MIoTClient
@@ -80,13 +85,13 @@ class MIoTCameraStream(BaseApi):
         )
 
     async def wait_for_data(self):
-        print("开始接收摄像头数据，按 Ctrl+C 结束...")
+        logger.info("开始接收摄像头数据...")
         try:
             # 挂起主协程，持续接收回调
             while True:
                 await asyncio.sleep(1)
         except KeyboardInterrupt:
-            print("收到退出信号，正在停止摄像头...")
+            logger.warning("收到退出信号，正在停止摄像头...")
         finally:
             # 清理资源
             await self.cleanup()

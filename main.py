@@ -1,5 +1,6 @@
 import micam_patch as _
 import os
+import signal
 from asyncio.subprocess import PIPE, create_subprocess_exec
 from loguru import logger
 from miloco_sdk import XiaomiClient
@@ -19,80 +20,51 @@ HWACC = os.getenv("HWACC", "0") == "1"
 def detect_keyframe_and_codec(data: bytes) -> tuple[bool, str]:
     """
     检测关键帧和 codec 类型。
-    注意：单帧数据极难 100% 准确区分 H.264/H.265，因为 NALU type 存在数值重叠。
-    此函数采用优先匹配确信度高的类型策略。
     """
     start = 0
     max_len = len(data)
 
-    # 只要还能找到起始码前缀
     while start < max_len:
-        # 1. 快速查找起始码 (00 00 01)
-        # H.264/H.265 起始码可能是 00 00 01 或 00 00 00 01
-        # find 只能找固定的，我们找 00 00 01，它能兼容两种情况
         pos = data.find(b"\x00\x00\x01", start)
         if pos == -1:
             break
 
-        # 确定 NAL Unit Header 的位置
-        # pos 是 00 00 01 的位置，header 在 pos + 3
         header_pos = pos + 3
-
-        # 越界检查
         if header_pos >= max_len:
             break
 
         header = data[header_pos]
-
-        # 移动 start 到下一次查找的位置 (避免死循环)
         start = header_pos + 1
 
-        # 2. 校验 Forbidden Zero Bit (Bit 0 必须为 0)
-        # 如果是 1，说明可能找错了位置，或者是坏数据
         if header & 0x80 != 0:
             continue
 
-        # 3. 解析类型
-        # H.264: 后 5 位
         h264_type = header & 0x1F
-        # H.265: 中间 6 位
         h265_type = (header >> 1) & 0x3F
 
-        # --- 判定逻辑 (优先级非常重要) ---
-
-        # [HEVC] 强特征：VPS (32)
-        # H.264 没有 type 32 (5 bit 最大 31)，所以如果算出 32，必是 HEVC
         if h265_type == 32:
             return True, "hevc"
 
-        # [H.264] 强特征：SPS (7), PPS (8)
-        # 需要排除这些数值在 HEVC 下被误判为特殊帧的可能
-        # H.264 SPS(7) -> hex 07/27/47/67...
-        #   0x67 (0110 0111) -> HEVC: (0x67>>1)&0x3F = 51 (未知/保留) -> 安全
-        #   0x27 (0010 0111) -> HEVC: 19 (IDR) -> **冲突风险**
-        # 但通常 SPS/PPS 会伴随 IDR 出现，我们优先返回 SPS/PPS 判定
         if h264_type in (7, 8):
             return True, "h264"
 
-        # [HEVC] SPS (33), PPS (34)
         if h265_type in (33, 34):
             return True, "hevc"
 
-        # [HEVC] IDR (19, 20)
         if h265_type in (19, 20):
-            # 这里存在严重歧义，H.264 的某些非关键帧字节可能算出 19/20
-            # 仅凭一个字节很难断定，但如果确实需要返回，倾向于认为是 HEVC IDR
             return True, "hevc"
 
-        # [H.264] IDR (5)
         if h264_type == 5:
             return True, "h264"
 
-    # 如果遍历完所有 NALU 都没找到关键帧特征
     return False, "unknown"
 
 
-async def run():
+async def stream_task():
+    """
+    单次推流任务逻辑。
+    如果发生错误或 ffmpeg 退出，将抛出异常或返回，由外层循环负责重启。
+    """
     logger.info(f"目标 RTSP 地址: {RTSP_URL} 设备名称: {DEVICE_NAME}")
     client = XiaomiClient()
     auth_info = get_auth_info(client)
@@ -103,7 +75,8 @@ async def run():
 
     if not online_devices:
         logger.error("设备列表: 暂无在线设备")
-        return
+        return False  # 返回 False 表示非网络错误的逻辑终止，但也需要重试
+    
     device_info = None
     for d in online_devices:
         if d.get("name") == DEVICE_NAME:
@@ -112,59 +85,82 @@ async def run():
     if not device_info:
         print_device_list(online_devices)
         logger.error(f"设备列表: 未找到名称为 '{DEVICE_NAME}' 的在线设备")
-        return
+        return False
 
     logger.info(f"选择设备: {device_info['name']}: ({device_info['did']})")
 
     # 创建音频 FIFO
     audio_fifo = os.path.join("tmp", "camera_audio.fifo")
+    if not os.path.exists("tmp"):
+        os.makedirs("tmp", exist_ok=True)
+        
     try:
-        os.unlink(audio_fifo)
-    except FileNotFoundError:
-        pass
-    os.mkfifo(audio_fifo)
+        if os.path.exists(audio_fifo):
+            os.unlink(audio_fifo)
+        os.mkfifo(audio_fifo)
+    except OSError as e:
+        logger.error(f"创建 FIFO 失败: {e}")
+        return False
 
-    # 状态
+    # 状态变量
     ffmpeg_proc = None
     codec = None
     frame_count = 0
     audio_frame_count = 0
     audio_file = None
     fifo_ready = asyncio.Event()
+    
+    # === 新增：用于在回调中通知主流程停止的事件 ===
+    stop_event = asyncio.Event()
 
     async def open_audio_fifo():
-        """后台任务：打开音频 FIFO 写端"""
         nonlocal audio_file
         loop = asyncio.get_event_loop()
-        # 这个调用会阻塞直到 ffmpeg 打开读端
-        audio_file = await loop.run_in_executor(
-            None, lambda: open(audio_fifo, "wb", buffering=0)
-        )
-        fifo_ready.set()
-        logger.info("音频管道已连接")
+        try:
+            audio_file = await loop.run_in_executor(
+                None, lambda: open(audio_fifo, "wb", buffering=0)
+            )
+            fifo_ready.set()
+            logger.info("音频管道已连接")
+        except Exception as e:
+            logger.error(f"打开音频管道失败: {e}")
+            stop_event.set()
 
     async def on_decode_pcm(did: str, data: bytes, ts: int, channel: int):
-        """接收解码后的 PCM 音频数据"""
         nonlocal audio_frame_count
         audio_frame_count += 1
 
-        # 等待 FIFO 就绪
         if not fifo_ready.is_set():
+            return
+        
+        # 如果已经触发停止，不再处理
+        if stop_event.is_set():
             return
 
         if audio_file:
             try:
                 audio_file.write(data)
-                # if audio_frame_count % 200 == 0:
-                #     logger.debug(f"音频推流中... 第 {audio_frame_count} 帧")
-            except BrokenPipeError:
-                pass
+            except (BrokenPipeError, OSError):
+                # 音频管道断裂通常意味着 ffmpeg 挂了
+                if not stop_event.is_set():
+                    logger.warning("音频写入 BrokenPipe，触发重启...")
+                    stop_event.set()
             except Exception as e:
                 logger.error(f"音频错误: {e}")
 
     async def on_raw_video(did: str, data: bytes, ts: int, seq: int, channel: int):
         nonlocal ffmpeg_proc, codec, frame_count
         frame_count += 1
+        
+        if stop_event.is_set():
+            return
+
+        # 检查 ffmpeg 进程是否存活
+        if ffmpeg_proc is not None:
+            if ffmpeg_proc.returncode is not None:
+                logger.error(f"FFmpeg 进程意外退出，代码: {ffmpeg_proc.returncode}")
+                stop_event.set()
+                return
 
         # 等待关键帧并检测 codec
         if ffmpeg_proc is None:
@@ -177,222 +173,86 @@ async def run():
             codec = detected
             logger.info(f"检测到 codec: {codec}，启动 ffmpeg...")
 
-            # 启动打开 FIFO 的任务
             asyncio.create_task(open_audio_fifo())
-            if not CODEC_FIX:
-                # 启动 ffmpeg
-                ffmpeg_proc = await create_subprocess_exec(
-                    "ffmpeg",
-                    "-y",
-                    "-v",
-                    "error",
-                    "-hide_banner",
-                    # 视频输入 - 使用系统时钟作为时间戳
-                    "-use_wallclock_as_timestamps",
-                    "1",
-                    "-analyzeduration",
-                    "10000",  # 20 seconds
-                    "-probesize",
-                    "10000",  # 20 MB
-                    "-thread_queue_size",
-                    "512",
-                    "-fflags",
-                    "+genpts+nobuffer+discardcorrupt",
-                    "-f",
-                    codec,
-                    "-i",
-                    "pipe:0",
-                    # 音频输入 - 同样使用系统时钟
-                    "-use_wallclock_as_timestamps",
-                    "1",
-                    "-thread_queue_size",
-                    "512",
-                    "-f",
-                    "s16le",
-                    "-ar",
-                    "16000",
-                    "-ac",
-                    "1",
-                    "-i",
-                    audio_fifo,
-                    # 映射
-                    "-map",
-                    "0:v",
-                    "-map",
-                    "1:a",
-                    # 编码
-                    "-c:v",
-                    "copy",
-                    # "-bsf:v", "hevc_mp4toannexb",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "64k",
-                    "-ar",
-                    "16000",
-                    # 音频时间戳修复
-                    "-af",
-                    "aresample=async=1000",
-                    # "aresample=async=1:first_pts=0",
-                    # 输出
-                    "-f",
-                    "rtsp",
-                    "-rtsp_transport",
-                    "tcp",
-                    "-max_delay",
-                    "100000",
-                    RTSP_URL,
-                    stdin=PIPE,
-                )
-            elif HWACC:
-                ffmpeg_proc = await create_subprocess_exec(
-                    "ffmpeg",
-                    "-y",
-                    "-v",
-                    "error",
-                    "-hide_banner",
-                    "-init_hw_device",
-                    "vaapi=va:/dev/dri/renderD128",
-                    "-filter_hw_device",
-                    "va",
-                    "-fflags",
-                    "+genpts+nobuffer+discardcorrupt",
-                    "-err_detect",
-                    "ignore_err",
-                    "-analyzeduration",
-                    "100000",
-                    "-probesize",
-                    "100000",
-                    "-thread_queue_size",
-                    "512",
-                    "-hwaccel",
-                    "vaapi",
-                    "-hwaccel_output_format",
-                    "vaapi",
-                    "-hwaccel_device",
-                    "va",
-                    "-f",
-                    codec,
-                    "-i",
-                    "pipe:0",
-                    "-thread_queue_size",
-                    "512",
-                    "-f",
-                    "s16le",
-                    "-ar",
-                    "16000",
-                    "-ac",
-                    "1",
-                    "-i",
-                    audio_fifo,
-                    "-map",
-                    "0:v",
-                    "-map",
-                    "1:a",
-                    "-vf",
-                    "scale_vaapi=format=nv12",
-                    "-c:v",
-                    "hevc_vaapi",
-                    "-qp",
-                    "25",
-                    "-bf",
-                    "0",  # [关键] 输出端禁用 B 帧，实现真正的低延迟
-                    "-g",
-                    "30",  # GOP 设为 30 (1秒一个I帧)，加快客户端首屏加载速度
-                    # -----------------------------
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "64k",
-                    "-ar",
-                    "16000",
-                    # 音频时间戳修复
-                    "-af",
-                    "aresample=async=1000",
-                    # 输出
-                    "-f",
-                    "rtsp",
-                    "-rtsp_transport",
-                    "tcp",
-                    "-max_delay",
-                    "100000",
-                    RTSP_URL,
-                    stdin=PIPE,
-                )
-            else:
-                ffmpeg_proc = await create_subprocess_exec(
-                    "ffmpeg",
-                    "-y",
-                    "-v",
-                    "error",
-                    "-hide_banner",
-                    "-fflags",
-                    "+genpts+nobuffer+discardcorrupt",
-                    "-err_detect",
-                    "ignore_err",
-                    "-analyzeduration",
-                    "100000",
-                    "-probesize",
-                    "100000",
-                    "-thread_queue_size",
-                    "512",
-                    "-f",
-                    codec,
-                    "-i",
-                    "pipe:0",
-                    "-thread_queue_size",
-                    "512",
-                    "-f",
-                    "s16le",
-                    "-ar",
-                    "16000",
-                    "-ac",
-                    "1",
-                    "-i",
-                    audio_fifo,
-                    "-map",
-                    "0:v",
-                    "-map",
-                    "1:a",
-                    "-c:v",
-                    "libx264",  # 强制转码为 H264
-                    "-preset",
-                    "ultrafast",  # 极速模式，降低 CPU 占用
-                    "-tune",
-                    "zerolatency",  # 零延迟调优
-                    "-g",
-                    "60",  # 关键帧间隔 (2秒)
-                    # -----------------------------
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "64k",
-                    "-ar",
-                    "16000",
-                    # 音频时间戳修复
-                    "-af",
-                    "aresample=async=1000",
-                    # 输出
-                    "-f",
-                    "rtsp",
-                    "-rtsp_transport",
-                    "tcp",
-                    "-max_delay",
-                    "100000",
-                    RTSP_URL,
-                    stdin=PIPE,
-                )
+            
+            common_flags = [
+                "-y", "-v", "error", "-hide_banner",
+                "-thread_queue_size", "512",
+                "-f", codec, "-i", "pipe:0",
+                "-thread_queue_size", "512",
+                "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", audio_fifo,
+            ]
+            
+            output_flags = [
+                "-map", "0:v", "-map", "1:a",
+                "-c:a", "aac", "-b:a", "64k", "-ar", "16000",
+                "-af", "aresample=async=1000",
+                "-f", "rtsp", "-rtsp_transport", "tcp",
+                "-max_delay", "100000", RTSP_URL
+            ]
+
+            try:
+                if not CODEC_FIX and not HWACC:
+                     # 默认模式：Copy Video
+                    cmd = ["ffmpeg"] + [
+                        "-use_wallclock_as_timestamps", "1",
+                        "-analyzeduration", "10000", "-probesize", "10000",
+                        "-fflags", "+genpts+nobuffer+discardcorrupt"
+                    ] + common_flags + ["-use_wallclock_as_timestamps", "1"] + ["-c:v", "copy"] + output_flags
+
+                elif HWACC:
+                     # VAAPI 硬件加速
+                     cmd = ["ffmpeg"] + [
+                        "-init_hw_device", "vaapi=va:/dev/dri/renderD128",
+                        "-filter_hw_device", "va",
+                        "-fflags", "+genpts+nobuffer+discardcorrupt",
+                        "-err_detect", "ignore_err",
+                        "-analyzeduration", "100000", "-probesize", "100000",
+                        "-hwaccel", "vaapi",
+                        "-hwaccel_output_format", "vaapi",
+                        "-hwaccel_device", "va"
+                     ] + common_flags + [
+                        "-vf", "scale_vaapi=format=nv12",
+                        "-c:v", "hevc_vaapi",
+                        "-qp", "25", "-bf", "0", "-g", "30"
+                     ] + output_flags
+                else:
+                    # CPU 转码模式
+                    cmd = ["ffmpeg"] + [
+                         "-fflags", "+genpts+nobuffer+discardcorrupt",
+                         "-err_detect", "ignore_err",
+                         "-analyzeduration", "100000", "-probesize", "100000"
+                    ] + common_flags + [
+                        "-c:v", "libx264", "-preset", "ultrafast",
+                        "-tune", "zerolatency", "-g", "60"
+                    ] + output_flags
+
+                ffmpeg_proc = await create_subprocess_exec(*cmd, stdin=PIPE)
+            except Exception as e:
+                logger.error(f"启动 FFmpeg 失败: {e}")
+                stop_event.set()
+                return
 
         # 写入视频
-        if ffmpeg_proc and ffmpeg_proc.stdin and not ffmpeg_proc.stdin.is_closing():
+        if ffmpeg_proc and ffmpeg_proc.stdin:
             try:
                 ffmpeg_proc.stdin.write(data)
-            except Exception:
-                pass
+                if frame_count % 30 == 0:
+                     await ffmpeg_proc.stdin.drain()
+                # await ffmpeg_proc.stdin.drain() # 可选：如果写入太快可能会阻塞
+            except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                # === 关键修改 ===
+                # 捕获写入错误，打印日志并触发停止事件
+                if not stop_event.is_set():
+                    logger.error(f"FFmpeg 管道断裂 (RTSP 服务器可能已断开): {e}")
+                    stop_event.set()
+            except Exception as e:
+                logger.error(f"写入视频流未知错误: {e}")
 
     logger.info(f"准备推流到: {RTSP_URL}")
 
     try:
+        # 启动 SDK 的推流任务
         await client.miot_camera_stream.run_stream(
             device_info["did"],
             0,
@@ -400,32 +260,94 @@ async def run():
             on_decode_pcm_callback=on_decode_pcm,
             video_quality=MIoTCameraVideoQuality.HIGH,
         )
-        await client.miot_camera_stream.wait_for_data()
+
+        # 我们需要同时等待：
+        # 1. SDK 的 wait_for_data (正常流程)
+        # 2. stop_event (FFmpeg 报错触发的异常流程)
+        wait_task = asyncio.create_task(client.miot_camera_stream.wait_for_data())
+        stop_task = asyncio.create_task(stop_event.wait())
+
+        done, pending = await asyncio.wait(
+            [wait_task, stop_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+
+        # 如果是因为 stop_event 触发而结束
+        if stop_task in done:
+            logger.warning("检测到停止信号，正在终止当前推流任务...")
+        
+        # 无论如何，尝试取消所有等待中的任务
+        for task in pending:
+            task.cancel()
+        
+
     except Exception as e:
-        logger.error(f"推流失败，请检查设备与当前程序在同一局域网: {e}")
+        logger.error(f"推流主逻辑发生错误: {e}")
     finally:
-        # 关闭音频文件
+        # === 资源清理 ===
+        logger.info("清理资源...")
+        
+        # 1. 关闭音频文件句柄
         if audio_file:
             try:
                 audio_file.close()
             except Exception:
                 pass
 
-        # 删除 FIFO
+        # 2. 删除管道文件
         try:
-            os.unlink(audio_fifo)
+            if os.path.exists(audio_fifo):
+                os.unlink(audio_fifo)
         except Exception:
             pass
 
-        # 关闭 ffmpeg
+        # 3. 强杀 ffmpeg
         if ffmpeg_proc:
             try:
                 if ffmpeg_proc.stdin:
-                    ffmpeg_proc.stdin.close()
+                    try:
+                        ffmpeg_proc.stdin.close()
+                    except Exception:
+                        pass
+                # 尝试优雅退出
                 ffmpeg_proc.terminate()
-            except Exception:
-                pass
+                try:
+                    await asyncio.wait_for(ffmpeg_proc.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    logger.warning("FFmpeg 未响应，强制 Kill")
+                    ffmpeg_proc.kill()
+            except Exception as e:
+                logger.error(f"关闭 FFmpeg 异常: {e}")
+
+    logger.info("本轮推流结束")
+    return True # 返回 True 表示应该重试
+
+
+async def main_supervisor():
+    """
+    守护进程循环：无限重试
+    """
+    retry_delay = 5
+    while True:
+        try:
+            logger.info(">>> 开始新一轮推流任务 <<<")
+            should_retry = await stream_task()
+            
+            if not should_retry:
+                # 如果是因为找不到设备等逻辑错误，稍微多睡一会再试
+                retry_delay = 30
+            else:
+                retry_delay = 5
+                
+        except Exception as e:
+            logger.critical(f"守护进程捕获到未处理异常: {e}")
+        
+        logger.info(f"等待 {retry_delay} 秒后重试...")
+        await asyncio.sleep(retry_delay)
 
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    try:
+        asyncio.run(main_supervisor())
+    except KeyboardInterrupt:
+        logger.info("用户停止脚本")

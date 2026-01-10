@@ -7,6 +7,7 @@ from miot.decoder import (
     _LOGGER,
     Packet,
 )
+from loguru import logger
 from .audiocodec import G711ADecoder
 
 
@@ -18,7 +19,7 @@ def _on_audio_callback(self, frame_data: MIoTCameraFrameData) -> None:
         elif frame_data.codec_id == MIoTCameraCodec.AUDIO_G711A:
             self._audio_decoder = G711ADecoder(sample_rate=16000, channels=0)
         else:
-            print("frame_data", frame_data)
+            logger.warning("frame_data", frame_data)
         self._resampler = AudioResampler(format="s16", layout="mono", rate=16000)
         _LOGGER.info("audio decoder created, %s", frame_data.codec_id)
     pkt = Packet(frame_data.data)
