@@ -8,7 +8,7 @@ WORKDIR /app
 RUN echo "deb http://ftp.cn.debian.org/debian sid main non-free" >> /etc/apt/sources.list;\
     apt-get update; \
     apt-get install -y --no-install-recommends intel-media-va-driver-non-free libmfx1; \
-    apt-get install -y --no-install-recommends iputils-ping bash tini; \
+    apt-get install -y --no-install-recommends iputils-ping; \
     apt-get install -y --no-install-recommends ffmpeg;\
     ffmpeg -version; \
     apt-get autoremove -y;\
@@ -34,9 +34,10 @@ ENV VERSION=${ARG_VERSION} \
     DEVICE_NAME="" \
     CODEC_FIX="0" \
     HWACC="0" \
-    LIBVA_DRIVER_NAME="iHD"
+    LIBVA_DRIVER_NAME="iHD" \
+    MAX_BUFFER_SEC=10
 
 VOLUME /app/data
 
 USER root
-ENTRYPOINT [ "tini","--","/app/run.bash" ]
+ENTRYPOINT [ "/bin/bash","/app/run.bash" ]

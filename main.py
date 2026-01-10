@@ -14,6 +14,7 @@ RTSP_URL = os.getenv("RTSP_URL", "rtsp://")
 DEVICE_NAME = os.getenv("DEVICE_NAME", "")
 CODEC_FIX = os.getenv("CODEC_FIX", "0") == "1"
 HWACC = os.getenv("HWACC", "0") == "1"
+MAX_BUFFER_SEC = int(os.getenv("MAX_BUFFER_SEC", "10"))
 
 
 def detect_keyframe_and_codec(data: bytes) -> tuple[bool, str]:
@@ -61,15 +62,17 @@ def detect_keyframe_and_codec(data: bytes) -> tuple[bool, str]:
 
 # 辅助函数：快速判断单帧是否为关键帧 (为了性能，简化判断逻辑)
 def is_keyframe(data: bytes, codec_type: str) -> bool:
-    if len(data) < 5: return False
+    if len(data) < 5:
+        return False
     # 简单判断：通常 NALU 头就在前几个字节
     # H264 I-frame NALU type usually 5 (0x65) or 7 (SPS) / 8 (PPS)
     # H265 I-frame NALU type usually 19, 20, 32, 33, 34
-    
+
     # 这里的逻辑稍微简化，复用你之前的 detect 逻辑会更稳，但为了性能我们只取首部
     # 注意：某些相机输出的数据可能带有多层封装，最稳妥的是复用你原本的 logic
     is_k, detected_codec = detect_keyframe_and_codec(data)
     return is_k and (detected_codec == codec_type)
+
 
 async def stream_task():
     """
@@ -121,7 +124,7 @@ async def stream_task():
     audio_file = None
     fifo_ready = asyncio.Event()
     stop_event = asyncio.Event()
-    video_queue = asyncio.Queue(maxsize=60)
+    video_queue = asyncio.Queue(maxsize=MAX_BUFFER_SEC * 20)
     writer_task = None
 
     async def open_audio_fifo():
@@ -210,13 +213,13 @@ async def stream_task():
                 "error",
                 "-hide_banner",
                 "-thread_queue_size",
-                "64",
+                "512",
                 "-f",
                 codec,
                 "-i",
                 "pipe:0",
                 "-thread_queue_size",
-                "64",
+                "512",
                 "-f",
                 "s16le",
                 "-ar",
@@ -262,7 +265,7 @@ async def stream_task():
                             "-analyzeduration",
                             "50000",
                             "-fflags",
-                            "+genpts+nobuffer+discardcorrupt",
+                            "+genpts+nobuffer",
                             "-flags",
                             "low_delay",
                         ]
@@ -307,7 +310,7 @@ async def stream_task():
                             "-bf",
                             "0",
                             "-g",
-                            "30",
+                            "20",
                         ]
                         + output_flags
                     )
@@ -360,28 +363,26 @@ async def stream_task():
 
             # === 核心修改：漏桶策略（丢弃旧帧）===
             if video_queue.full():
-                is_k, _ = detect_keyframe_and_codec(data) 
+                is_k, _ = detect_keyframe_and_codec(data)
 
                 if is_k:
                     # === 策略 A: 关键帧跳跃 ===
                     # 既然队列满了，说明积压了很久。现在来了一个最新的 I 帧。
                     # 动作：清空队列里所有的老数据，直接从现在的这个 I 帧开始发。
                     # 结果：画面会“跳”到最新时刻，延迟瞬间清零，且画面清晰（因为是 I 帧）。
-                    logger.warning(f"检测到延迟积压，清空队列以跳跃到最新关键帧 (Seq: {seq})")
+                    logger.warning(
+                        f"检测到延迟积压，清空队列以跳跃到最新关键帧 (Seq: {seq})"
+                    )
                     while not video_queue.empty():
                         try:
                             video_queue.get_nowait()
                             video_queue.task_done()
                         except asyncio.QueueEmpty:
                             break
-                    
+
                     await video_queue.put(data)
                 else:
-                    # === 策略 B: 丢弃 P 帧 ===
-                    # 队列满了，且当前是 P 帧。
-                    # 动作：直接丢弃这个 P 帧。
-                    # 结果：视频会显得有点卡顿（帧率下降），但不会花屏（因为我们没有丢 I 帧，也没有强行插入 P 帧）。
-                    # 只要不进队列，就不会造成积压。
+                    # === 策略 B: 非关键帧丢弃 ===
                     pass
 
             try:
