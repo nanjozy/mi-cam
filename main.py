@@ -98,7 +98,7 @@ async def stream_task():
             os.unlink(audio_fifo)
         os.mkfifo(audio_fifo)
     except OSError as e:
-        logger.error(f"创建 FIFO 失败: {e}")
+        logger.exception(f"创建 FIFO 失败: {e}")
         return False
 
     # 状态变量
@@ -114,15 +114,14 @@ async def stream_task():
 
     async def open_audio_fifo():
         nonlocal audio_file
-        loop = asyncio.get_event_loop()
         try:
             audio_file = await asyncio.to_thread(
-                None, lambda: open(audio_fifo, "wb", buffering=0)
+                lambda: open(audio_fifo, "wb", buffering=0)
             )
             fifo_ready.set()
             logger.info("音频管道已连接")
         except Exception as e:
-            logger.error(f"打开音频管道失败: {e}")
+            logger.exception(f"打开音频管道失败: {e}")
             stop_event.set()
 
     async def ffmpeg_writer_worker():
@@ -138,17 +137,17 @@ async def stream_task():
                         # === 核心修改：每帧都立即 flush，禁止 Python 层面缓冲 ===
                         await ffmpeg_proc.stdin.drain()
                     except (BrokenPipeError, ConnectionResetError):
-                        logger.error("FFmpeg 管道断裂 (推流中断)")
+                        logger.exception("FFmpeg 管道断裂 (推流中断)")
                         stop_event.set()
                     except Exception as e:
-                        logger.error(f"写入 FFmpeg 异常: {e}")
+                        logger.exception(f"写入 FFmpeg 异常: {e}")
 
                 video_queue.task_done()
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Writer Worker 未知异常: {e}")
+                logger.exception(f"Writer Worker 未知异常: {e}")
                 break
 
     async def on_decode_pcm(did: str, data: bytes, ts: int, channel: int):
@@ -171,7 +170,7 @@ async def stream_task():
                     logger.warning("音频写入 BrokenPipe，触发重启...")
                     stop_event.set()
             except Exception as e:
-                logger.error(f"音频错误: {e}")
+                logger.exception(f"音频错误: {e}")
 
     async def on_raw_video(did: str, data: bytes, ts: int, seq: int, channel: int):
         nonlocal ffmpeg_proc, codec, frame_count, writer_task
@@ -330,12 +329,12 @@ async def stream_task():
 
                 # 启动写入消费者
                 writer_task = asyncio.create_task(ffmpeg_writer_worker())
-                
+
                 # 将当前这一帧（关键帧）放入队列
                 await video_queue.put(data)
 
             except Exception as e:
-                logger.error(f"启动 FFmpeg 失败: {e}")
+                logger.exception(f"启动 FFmpeg 失败: {e}")
                 stop_event.set()
                 return
         # 当 FFmpeg 启动后，使用队列逻辑：
@@ -354,7 +353,7 @@ async def stream_task():
                     # logger.debug("Drop Frame") # 调试时可开启
                 except asyncio.QueueEmpty:
                     pass
-            
+
             try:
                 video_queue.put_nowait(data)
             except Exception:
@@ -377,26 +376,25 @@ async def stream_task():
         # 2. stop_event (FFmpeg 报错触发的异常流程)
         wait_list = [
             asyncio.create_task(client.miot_camera_stream.wait_for_data()),
-            asyncio.create_task(stop_event.wait())
+            asyncio.create_task(stop_event.wait()),
         ]
-        
+
         # 如果 writer 已经启动，也要监控它是否报错退出
         if writer_task:
             wait_list.append(writer_task)
 
         done, pending = await asyncio.wait(
-            wait_list,
-            return_when=asyncio.FIRST_COMPLETED
+            wait_list, return_when=asyncio.FIRST_COMPLETED
         )
 
         if stop_event.is_set():
             logger.warning("检测到停止信号，重置任务...")
-        
+
         for task in pending:
             task.cancel()
 
     except Exception as e:
-        logger.error(f"推流主逻辑发生错误: {e}")
+        logger.exception(f"推流主逻辑发生错误: {e}")
     finally:
         # === 资源清理 ===
         logger.info("清理资源...")
@@ -437,7 +435,7 @@ async def stream_task():
                     logger.warning("FFmpeg 未响应，强制 Kill")
                     ffmpeg_proc.kill()
             except Exception as e:
-                logger.error(f"关闭 FFmpeg 异常: {e}")
+                logger.exception(f"关闭 FFmpeg 异常: {e}")
 
     logger.info("本轮推流结束")
     return True  # 返回 True 表示应该重试
