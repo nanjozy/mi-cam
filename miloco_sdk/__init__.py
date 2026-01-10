@@ -11,7 +11,7 @@ from miloco_sdk.plugin.home import Home
 from miloco_sdk.plugin.miot.mIot_camera_status import MIoTCameraStatusF
 from miloco_sdk.plugin.miot.mIot_camera_stream import MIoTCameraStream
 from miloco_sdk.utils.common import get_device_id
-from miloco_sdk.utils.const import OAUTH2_CLIENT_ID
+from miot.const import OAUTH2_CLIENT_ID
 
 # device_uuid = uuid.uuid4().hex
 PROJECT_CODE: str = "mico"

@@ -6,13 +6,15 @@ from asyncio.subprocess import PIPE, create_subprocess_exec
 from loguru import logger
 from miloco_sdk import XiaomiClient
 from miloco_sdk.cli.utils import get_auth_info, print_device_list
-from miloco_sdk.utils.types import MIoTCameraVideoQuality
+from miot.types import MIoTCameraVideoQuality
 from dotenv import load_dotenv
 
 load_dotenv()
 # RTSP 服务器地址
 RTSP_URL = os.getenv("RTSP_URL", "rtsp://")
 DEVICE_NAME = os.getenv("DEVICE_NAME", "")
+CODEC_FIX = os.getenv("CODEC_FIX", "0") == "1"
+HWACC = os.getenv("HWACC", "0") == "1"
 
 
 def detect_keyframe_and_codec(data: bytes) -> tuple[bool, str]:
@@ -23,7 +25,7 @@ def detect_keyframe_and_codec(data: bytes) -> tuple[bool, str]:
     """
     start = 0
     max_len = len(data)
-    
+
     # 只要还能找到起始码前缀
     while start < max_len:
         # 1. 快速查找起始码 (00 00 01)
@@ -32,17 +34,17 @@ def detect_keyframe_and_codec(data: bytes) -> tuple[bool, str]:
         pos = data.find(b"\x00\x00\x01", start)
         if pos == -1:
             break
-            
+
         # 确定 NAL Unit Header 的位置
         # pos 是 00 00 01 的位置，header 在 pos + 3
         header_pos = pos + 3
-        
+
         # 越界检查
         if header_pos >= max_len:
             break
-            
+
         header = data[header_pos]
-        
+
         # 移动 start 到下一次查找的位置 (避免死循环)
         start = header_pos + 1
 
@@ -66,13 +68,13 @@ def detect_keyframe_and_codec(data: bytes) -> tuple[bool, str]:
 
         # [H.264] 强特征：SPS (7), PPS (8)
         # 需要排除这些数值在 HEVC 下被误判为特殊帧的可能
-        # H.264 SPS(7) -> hex 07/27/47/67... 
+        # H.264 SPS(7) -> hex 07/27/47/67...
         #   0x67 (0110 0111) -> HEVC: (0x67>>1)&0x3F = 51 (未知/保留) -> 安全
         #   0x27 (0010 0111) -> HEVC: 19 (IDR) -> **冲突风险**
         # 但通常 SPS/PPS 会伴随 IDR 出现，我们优先返回 SPS/PPS 判定
         if h264_type in (7, 8):
             return True, "h264"
-        
+
         # [HEVC] SPS (33), PPS (34)
         if h265_type in (33, 34):
             return True, "hevc"
@@ -86,7 +88,7 @@ def detect_keyframe_and_codec(data: bytes) -> tuple[bool, str]:
         # [H.264] IDR (5)
         if h264_type == 5:
             return True, "h264"
-            
+
     # 如果遍历完所有 NALU 都没找到关键帧特征
     return False, "unknown"
 
@@ -109,16 +111,12 @@ async def run():
             device_info = d
             break
     if not device_info:
+        print_device_list(online_devices)
         logger.error(f"\n设备列表: 未找到名称为 '{DEVICE_NAME}' 的在线设备")
         return
-    print_device_list(online_devices)
-    # index = input("请输入摄像头设备序号: ")
-    # try:
-    #     device_info = online_devices[int(index) - 1]
-    # except Exception as e:
-    #     print(f"输入错误: {e}")
-    #     return
-    logger.info(device_info)
+
+    logger.info(f"选择设备: {device_info['name']}: ({device_info['did']})")
+    
     # 创建音频 FIFO
     audio_fifo = os.path.join("tmp", "camera_audio.fifo")
     try:
@@ -182,68 +180,223 @@ async def run():
 
             # 启动打开 FIFO 的任务
             asyncio.create_task(open_audio_fifo())
-            # 启动 ffmpeg
-            ffmpeg_proc = await create_subprocess_exec(
-                "ffmpeg",
-                "-y",
-                "-v",
-                "error",
-                "-hide_banner",
-                "-fflags", "nobuffer",       # 关键：减少输入缓冲，降低延迟
-    "-flags", "low_delay",       # 告诉解码器/解复用器这是一个低延迟流
-                # 视频输入 - 使用系统时钟作为时间戳
-                "-use_wallclock_as_timestamps",
-                "1",
-                '-analyzeduration', '10000',  # 20 seconds
-                '-probesize', '10000',  # 20 MB
-                "-thread_queue_size",
-                "512",
-                "-fflags",
-                "+genpts",
-                "-f",
-                codec,
-                "-i",
-                "pipe:0",
-                # 音频输入 - 同样使用系统时钟
-                "-use_wallclock_as_timestamps",
-                "1",
-                "-thread_queue_size",
-                "512",
-                "-f",
-                "s16le",
-                "-ar",
-                "8000",
-                "-ac",
-                "1",
-                "-i",
-                audio_fifo,
-                # 映射
-                "-map",
-                "0:v",
-                "-map",
-                "1:a",
-                # 编码
-                "-c:v",
-                "copy",
-                # "-bsf:v", "hevc_mp4toannexb",
-                "-c:a",
-                "aac",
-                "-b:a", "64k",
-                "-ar",
-                "16000",
-                # 音频时间戳修复
-                "-af",
-                "aresample=async=1000",
-                # "aresample=async=1:first_pts=0",
-                # 输出
-                "-f",
-                "rtsp",
-                "-rtsp_transport",
-                "tcp",
-                "-max_delay", "100000",
-                RTSP_URL,
-                stdin=PIPE,
-            )
+            if not CODEC_FIX:
+                # 启动 ffmpeg
+                ffmpeg_proc = await create_subprocess_exec(
+                    "ffmpeg",
+                    "-y",
+                    "-v",
+                    "error",
+                    "-hide_banner",
+                    "-fflags",
+                    "nobuffer",  # 关键：减少输入缓冲，降低延迟
+                    "-flags",
+                    "low_delay",  # 告诉解码器/解复用器这是一个低延迟流
+                    # 视频输入 - 使用系统时钟作为时间戳
+                    "-use_wallclock_as_timestamps",
+                    "1",
+                    "-analyzeduration",
+                    "10000",  # 20 seconds
+                    "-probesize",
+                    "10000",  # 20 MB
+                    "-thread_queue_size",
+                    "512",
+                    "-fflags",
+                    "+genpts",
+                    "-f",
+                    codec,
+                    "-i",
+                    "pipe:0",
+                    # 音频输入 - 同样使用系统时钟
+                    "-use_wallclock_as_timestamps",
+                    "1",
+                    "-thread_queue_size",
+                    "512",
+                    "-f",
+                    "s16le",
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-i",
+                    audio_fifo,
+                    # 映射
+                    "-map",
+                    "0:v",
+                    "-map",
+                    "1:a",
+                    # 编码
+                    "-c:v",
+                    "copy",
+                    # "-bsf:v", "hevc_mp4toannexb",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "64k",
+                    "-ar",
+                    "16000",
+                    # 音频时间戳修复
+                    "-af",
+                    "aresample=async=1000",
+                    # "aresample=async=1:first_pts=0",
+                    # 输出
+                    "-f",
+                    "rtsp",
+                    "-rtsp_transport",
+                    "tcp",
+                    "-max_delay",
+                    "100000",
+                    RTSP_URL,
+                    stdin=PIPE,
+                )
+            elif HWACC:
+                ffmpeg_proc = await create_subprocess_exec(
+                    "ffmpeg",
+                    "-y",
+                    "-v",
+                    "error",
+                    "-hide_banner",
+                    "-init_hw_device",
+                    "vaapi=va:/dev/dri/renderD128",
+                    "-filter_hw_device",
+                    "va",
+                    # ---------------------------
+                    "-fflags",
+                    "+genpts+nobuffer+discardcorrupt",
+                    "-err_detect",
+                    "ignore_err",
+                    "-analyzeduration",
+                    "100000",
+                    "-probesize",
+                    "100000",
+                    "-thread_queue_size",
+                    "512",
+                    "-hwaccel",
+                    "vaapi",
+                    "-hwaccel_output_format",
+                    "vaapi",
+                    "-hwaccel_device",
+                    "va",
+                    "-f",
+                    codec,
+                    "-i",
+                    "pipe:0",
+                    # 音频输入
+                    # "-use_wallclock_as_timestamps",
+                    # "1",
+                    "-thread_queue_size",
+                    "512",
+                    "-f",
+                    "s16le",
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-i",
+                    audio_fifo,
+                    # 映射
+                    "-map",
+                    "0:v",
+                    "-map",
+                    "1:a",
+                    "-vf",
+                    "scale_vaapi=format=nv12",
+                    "-c:v",
+                    "hevc_vaapi",
+                    "-qp",
+                    "25",
+                    "-bf",
+                    "0",  # [关键] 输出端禁用 B 帧，实现真正的低延迟
+                    "-g",
+                    "30",  # GOP 设为 30 (1秒一个I帧)，加快客户端首屏加载速度
+                    # -----------------------------
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "64k",
+                    "-ar",
+                    "16000",
+                    # 音频时间戳修复
+                    "-af",
+                    "aresample=async=1000",
+                    # 输出
+                    "-f",
+                    "rtsp",
+                    "-rtsp_transport",
+                    "tcp",
+                    "-max_delay",
+                    "100000",
+                    RTSP_URL,
+                    stdin=PIPE,
+                )
+            else:
+                ffmpeg_proc = await create_subprocess_exec(
+                    "ffmpeg",
+                    "-y",
+                    "-v",
+                    "error",
+                    "-hide_banner",
+                    "-fflags",
+                    "+genpts+nobuffer+discardcorrupt",
+                    "-err_detect",
+                    "ignore_err",
+                    "-analyzeduration",
+                    "100000",
+                    "-probesize",
+                    "100000",
+                    "-thread_queue_size",
+                    "512",
+                    "-f",
+                    codec,
+                    "-i",
+                    "pipe:0",
+                    # 音频输入
+                    # "-use_wallclock_as_timestamps",
+                    # "1",
+                    "-thread_queue_size",
+                    "512",
+                    "-f",
+                    "s16le",
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-i",
+                    audio_fifo,
+                    # 映射
+                    "-map",
+                    "0:v",
+                    "-map",
+                    "1:a",
+                    "-c:v",
+                    "libx264",  # 强制转码为 H264
+                    "-preset",
+                    "ultrafast",  # 极速模式，降低 CPU 占用
+                    "-tune",
+                    "zerolatency",  # 零延迟调优
+                    "-g",
+                    "60",  # 关键帧间隔 (2秒)
+                    # -----------------------------
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "64k",
+                    "-ar",
+                    "16000",
+                    # 音频时间戳修复
+                    "-af",
+                    "aresample=async=1000",
+                    # 输出
+                    "-f",
+                    "rtsp",
+                    "-rtsp_transport",
+                    "tcp",
+                    "-max_delay",
+                    "100000",
+                    RTSP_URL,
+                    stdin=PIPE,
+                )
+
         # 写入视频
         if ffmpeg_proc and ffmpeg_proc.stdin and not ffmpeg_proc.stdin.is_closing():
             try:

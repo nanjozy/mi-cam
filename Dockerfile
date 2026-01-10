@@ -29,7 +29,9 @@ RUN chmod +x /app/run.bash;\
 ARG ARG_VERSION=0.0.0
 ENV VERSION=${ARG_VERSION} \
     RTSP_URL="rtsp://" \
-    DEVICE_NAME=""
+    DEVICE_NAME="" \
+    CODEC_FIX="0" \
+    HWACC="0"
 
 VOLUME /app/data
 

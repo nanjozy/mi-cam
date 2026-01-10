@@ -1,9 +1,9 @@
 import asyncio
 
 from miloco_sdk.base import BaseApi
-from miloco_sdk.plugin.miot.client import MIoTClient
+from miot.client import MIoTClient
 from miloco_sdk.utils.const import MICO_REDIRECT_URI
-from miloco_sdk.utils.types import MIoTCameraVideoQuality, MIoTOauthInfo
+from miot.types import MIoTCameraVideoQuality, MIoTOauthInfo
 
 
 class MIoTCameraStream(BaseApi):
@@ -16,7 +16,7 @@ class MIoTCameraStream(BaseApi):
         on_decode_jpg_callback=None,
         on_raw_audio_callback=None,
         on_decode_pcm_callback=None,
-        video_quality=MIoTCameraVideoQuality.LOW # 清晰度， 默认 LOW，可改成 HIGH
+        video_quality=MIoTCameraVideoQuality.HIGH # 清晰度， 默认 LOW，可改成 HIGH
     ) -> None:
         """从小米云端获取并打印摄像头原始视频流信息。"""
         # 解析 oauth_info
@@ -40,7 +40,6 @@ class MIoTCameraStream(BaseApi):
         self.camera_instance = await self.miot_client.create_camera_instance_async(
             camera_info=camera_info,
             frame_interval=500,  # 毫秒，内部解码用
-            enable_hw_accel=False,  # 关闭硬件加速，脚本调试更稳定
         )
 
         if on_raw_video_callback:
