@@ -109,7 +109,7 @@ async def stream_task():
     audio_file = None
     fifo_ready = asyncio.Event()
     stop_event = asyncio.Event()
-    video_queue = asyncio.Queue(maxsize=5)
+    video_queue = asyncio.Queue(maxsize=2)
     writer_task = None
 
     async def open_audio_fifo():
