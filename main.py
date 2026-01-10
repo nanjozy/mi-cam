@@ -1,13 +1,12 @@
-from micam_patch.logger import logger as _
-import asyncio
+import micam_patch as _
 import os
-import tempfile
 from asyncio.subprocess import PIPE, create_subprocess_exec
 from loguru import logger
 from miloco_sdk import XiaomiClient
 from miloco_sdk.cli.utils import get_auth_info, print_device_list
 from miot.types import MIoTCameraVideoQuality
 from dotenv import load_dotenv
+import asyncio
 
 load_dotenv()
 # RTSP 服务器地址
@@ -116,7 +115,7 @@ async def run():
         return
 
     logger.info(f"选择设备: {device_info['name']}: ({device_info['did']})")
-    
+
     # 创建音频 FIFO
     audio_fifo = os.path.join("tmp", "camera_audio.fifo")
     try:

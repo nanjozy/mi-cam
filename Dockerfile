@@ -19,7 +19,8 @@ RUN python -m venv .venv;\
     /app/.venv/bin/pip install -U pip --no-cache; \
     /app/.venv/bin/pip install poetry --no-cache; \
     /app/.venv/bin/poetry install --no-root; \
-    /app/.venv/bin/pip cache purge;
+    /app/.venv/bin/pip cache purge;\
+    /app/.venv/bin/pip freeze;
 
 COPY . /app/
 
