@@ -1,7 +1,7 @@
 [project]
-name = "miloco-sdk"
+name = "mi-cam"
 version = "0.1.0"
-description = "Xiaomi Miloco SDK for Python"
+description = "mi-cam"
 readme = "README.md"
 authors = [
     {name = "Xiaomi Corporation"}

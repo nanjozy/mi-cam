@@ -7,6 +7,7 @@ WORKDIR /app
 
 RUN echo "deb http://ftp.cn.debian.org/debian sid main" >> /etc/apt/sources.list;\
     apt-get update; \
+    apt-get install -y --no-install-recommends intel-media-va-driver-non-free libmfx1 vainfo; \
     apt-get install -y --no-install-recommends iputils-ping bash tini; \
     apt-get install -y --no-install-recommends ffmpeg;\
     ffmpeg -version; \
@@ -19,8 +20,7 @@ RUN python -m venv .venv;\
     /app/.venv/bin/pip install -U pip --no-cache; \
     /app/.venv/bin/pip install poetry --no-cache; \
     /app/.venv/bin/poetry install --no-root; \
-    /app/.venv/bin/pip cache purge;\
-    /app/.venv/bin/pip freeze;
+    /app/.venv/bin/pip cache purge;
 
 COPY . /app/
 

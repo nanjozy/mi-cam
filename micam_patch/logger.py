@@ -18,6 +18,6 @@ logger.add(
     enqueue=True,
 )
 
-for name in ("miot.lan", "miot.camera", "miot.cloud"):
+for name in ("miot.lan", "miot.camera", "miot.cloud", "miot.i18n"):
     log1 = getLogger(name)
     log1.setLevel(WARNING)

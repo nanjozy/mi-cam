@@ -102,7 +102,7 @@ async def run():
     online_devices = [d for d in device_list if d.get("isOnline", False)]
 
     if not online_devices:
-        logger.error("\n设备列表: 暂无在线设备")
+        logger.error("设备列表: 暂无在线设备")
         return
     device_info = None
     for d in online_devices:
@@ -111,7 +111,7 @@ async def run():
             break
     if not device_info:
         print_device_list(online_devices)
-        logger.error(f"\n设备列表: 未找到名称为 '{DEVICE_NAME}' 的在线设备")
+        logger.error(f"设备列表: 未找到名称为 '{DEVICE_NAME}' 的在线设备")
         return
 
     logger.info(f"选择设备: {device_info['name']}: ({device_info['did']})")
@@ -187,10 +187,6 @@ async def run():
                     "-v",
                     "error",
                     "-hide_banner",
-                    "-fflags",
-                    "nobuffer",  # 关键：减少输入缓冲，降低延迟
-                    "-flags",
-                    "low_delay",  # 告诉解码器/解复用器这是一个低延迟流
                     # 视频输入 - 使用系统时钟作为时间戳
                     "-use_wallclock_as_timestamps",
                     "1",
@@ -201,7 +197,7 @@ async def run():
                     "-thread_queue_size",
                     "512",
                     "-fflags",
-                    "+genpts",
+                    "+genpts+nobuffer+discardcorrupt",
                     "-f",
                     codec,
                     "-i",
@@ -259,7 +255,6 @@ async def run():
                     "vaapi=va:/dev/dri/renderD128",
                     "-filter_hw_device",
                     "va",
-                    # ---------------------------
                     "-fflags",
                     "+genpts+nobuffer+discardcorrupt",
                     "-err_detect",
@@ -280,9 +275,6 @@ async def run():
                     codec,
                     "-i",
                     "pipe:0",
-                    # 音频输入
-                    # "-use_wallclock_as_timestamps",
-                    # "1",
                     "-thread_queue_size",
                     "512",
                     "-f",
@@ -293,7 +285,6 @@ async def run():
                     "1",
                     "-i",
                     audio_fifo,
-                    # 映射
                     "-map",
                     "0:v",
                     "-map",
@@ -349,9 +340,6 @@ async def run():
                     codec,
                     "-i",
                     "pipe:0",
-                    # 音频输入
-                    # "-use_wallclock_as_timestamps",
-                    # "1",
                     "-thread_queue_size",
                     "512",
                     "-f",
@@ -362,7 +350,6 @@ async def run():
                     "1",
                     "-i",
                     audio_fifo,
-                    # 映射
                     "-map",
                     "0:v",
                     "-map",
@@ -400,14 +387,10 @@ async def run():
         if ffmpeg_proc and ffmpeg_proc.stdin and not ffmpeg_proc.stdin.is_closing():
             try:
                 ffmpeg_proc.stdin.write(data)
-                # if frame_count % 100 == 0:
-                #     logger.debug(
-                #         f"视频推流中... 第 {frame_count} 帧, 音频 {audio_frame_count} 帧"
-                #     )
             except Exception:
                 pass
 
-    logger.info(f"\n准备推流到: {RTSP_URL}")
+    logger.info(f"准备推流到: {RTSP_URL}")
 
     try:
         await client.miot_camera_stream.run_stream(
