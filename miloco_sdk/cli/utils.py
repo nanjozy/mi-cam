@@ -1,10 +1,12 @@
-import base64
 import json
 import os
 import time
 import urllib
+from loguru import logger
 
-from miloco_sdk.configs import DATA_PATH
+DATA_PATH = os.getenv("DATA_PATH", "./data")
+
+os.makedirs(DATA_PATH, exist_ok=True)
 
 
 def get_display_width(text):
@@ -42,7 +44,10 @@ def get_auth_info(client):
         with open(auth_file, "r", encoding="utf-8") as f:
             auth_info = json.load(f)
 
-        if auth_info.get("created_at", 0) + auth_info.get("expires_in", 0) > int(time.time()) - 60 * 10:
+        if (
+            auth_info.get("created_at", 0) + auth_info.get("expires_in", 0)
+            > int(time.time()) - 60 * 10
+        ):
             return auth_info
 
     code_url = client.authorize.get_code_url()
@@ -61,17 +66,19 @@ def get_auth_info(client):
 def print_device_list(device_list):
     """打印设备列表"""
 
-    print("\n设备列表:")
+    logger.info("\n设备列表:")
     separator = "-" * 70
-    print(separator)
-    header = f"{pad_string('序号', 8)}{pad_string('房间', 16)}{pad_string('设备名称', 36)}"
-    print(header)
-    print(separator)
+    logger.info(separator)
+    header = (
+        f"{pad_string('序号', 8)}{pad_string('房间', 16)}{pad_string('设备名称', 36)}"
+    )
+    logger.info(header)
+    logger.info(separator)
 
     for idx, device in enumerate(device_list, 1):
         room_name = device.get("room_name", "未知")
         device_name = device.get("name", "未知")
         row = f"{pad_string(str(idx), 8)}{pad_string(room_name, 16)}{pad_string(device_name, 36)}"
-        print(row)
+        logger.info(row)
 
-    print(separator)
+    logger.info(separator)

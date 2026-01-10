@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 from miloco_sdk.base import BaseApi
-from miloco_sdk.utils.const import (
+from miot.const import (
     MIHOME_HTTP_API_PUBKEY,
     MIHOME_HTTP_API_TIMEOUT,
     MIHOME_HTTP_USER_AGENT,
@@ -34,13 +34,15 @@ class Home(BaseApi):
         self._base_url = f"https://{PROJECT_CODE}.api.mijia.tech"
 
         self._cipher = Cipher(
-            algorithms.AES(self._random_aes_key), modes.CBC(self._random_aes_key), backend=default_backend()
+            algorithms.AES(self._random_aes_key),
+            modes.CBC(self._random_aes_key),
+            backend=default_backend(),
         )
 
         self._client_secret_b64 = base64.b64encode(
-            load_pem_public_key(MIHOME_HTTP_API_PUBKEY.encode("utf-8"), default_backend()).encrypt(
-                plaintext=self._random_aes_key, padding=asym_padding.PKCS1v15()
-            )
+            load_pem_public_key(
+                MIHOME_HTTP_API_PUBKEY.encode("utf-8"), default_backend()
+            ).encrypt(plaintext=self._random_aes_key, padding=asym_padding.PKCS1v15())
         ).decode(
             "utf-8"
         )  # type: ignore
@@ -63,7 +65,9 @@ class Home(BaseApi):
         """AES encrypt."""
         encryptor = self._cipher.encryptor()
         padder = sym_padding.PKCS7(128).padder()
-        padded_data = padder.update(json.dumps(data).encode("utf-8")) + padder.finalize()
+        padded_data = (
+            padder.update(json.dumps(data).encode("utf-8")) + padder.finalize()
+        )
         encrypted = encryptor.update(padded_data) + encryptor.finalize()
         result = base64.b64encode(encrypted).decode("utf-8")
         return result
@@ -86,7 +90,9 @@ class Home(BaseApi):
             headers=self.__api_request_headers,
         )
         if http_res.status_code != 200:
-            raise Exception(f"invalid response code, {http_res.status_code}, {http_res.text}")
+            raise Exception(
+                f"invalid response code, {http_res.status_code}, {http_res.text}"
+            )
 
         res_obj: Dict = self.aes_decrypt_with_b64(http_res.text)
         return res_obj

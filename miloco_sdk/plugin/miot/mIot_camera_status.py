@@ -8,8 +8,8 @@ import asyncio
 import logging
 
 from miloco_sdk.base import BaseApi
-from miloco_sdk.plugin.miot.camera import MIoTCamera, MIoTCameraInstance
-from miloco_sdk.utils.types import MIoTCameraInfo, MIoTCameraStatus, MIoTCameraVideoQuality
+from miot.camera import MIoTCamera, MIoTCameraInstance
+from miot.types import MIoTCameraInfo, MIoTCameraStatus, MIoTCameraVideoQuality
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 _LOGGER = logging.getLogger(__name__)
