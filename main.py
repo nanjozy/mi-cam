@@ -197,14 +197,14 @@ async def stream_task():
                 "-v",
                 "error",
                 "-hide_banner",
-                "-thread_queue_size",
-                "512",
+                # "-thread_queue_size",
+                # "512",
                 "-f",
                 codec,
                 "-i",
                 "pipe:0",
-                "-thread_queue_size",
-                "512",
+                # "-thread_queue_size",
+                # "512",
                 "-f",
                 "s16le",
                 "-ar",
@@ -233,7 +233,7 @@ async def stream_task():
                 "-rtsp_transport",
                 "tcp",
                 "-max_delay",
-                "100000",
+                "0",
                 RTSP_URL,
             ]
 
@@ -245,12 +245,12 @@ async def stream_task():
                         + [
                             "-use_wallclock_as_timestamps",
                             "1",
-                            "-analyzeduration",
-                            "5000",
-                            "-probesize",
-                            "5000",
+                            # "-analyzeduration",
+                            # "5000",
+                            # "-probesize",
+                            # "5000",
                             "-fflags",
-                            "+genpts+nobuffer",
+                            "+genpts+nobuffer+discardcorrupt",
                         ]
                         + common_flags
                         + ["-use_wallclock_as_timestamps", "1"]
@@ -272,9 +272,9 @@ async def stream_task():
                             "-err_detect",
                             "ignore_err",
                             "-analyzeduration",
-                            "100000",
+                            "50000",
                             "-probesize",
-                            "100000",
+                            "50000",
                             "-hwaccel",
                             "vaapi",
                             "-hwaccel_output_format",
@@ -307,9 +307,9 @@ async def stream_task():
                             "-err_detect",
                             "ignore_err",
                             "-analyzeduration",
-                            "100000",
+                            "50000",
                             "-probesize",
-                            "100000",
+                            "50000",
                         ]
                         + common_flags
                         + [
