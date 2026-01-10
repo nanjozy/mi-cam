@@ -7,13 +7,7 @@ WORKDIR /app
 
 RUN echo "deb http://ftp.cn.debian.org/debian sid main non-free" >> /etc/apt/sources.list;\
     apt-get update; \
-    apt-get install -y --no-install-recommends libva2 \
-    intel-media-va-driver-non-free \
-    intel-opencl-icd \
-    libmfx1 \
-    libmfx-gen1.2 \
-    vainfo \
-    clinfo; \
+    apt-get install -y --no-install-recommends intel-media-va-driver-non-free libmfx1; \
     apt-get install -y --no-install-recommends iputils-ping bash tini; \
     apt-get install -y --no-install-recommends ffmpeg;\
     ffmpeg -version; \
