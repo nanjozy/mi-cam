@@ -1,6 +1,5 @@
 from micam_patch import logging
 import os
-import time
 from asyncio.subprocess import PIPE, create_subprocess_exec
 from miloco_sdk import XiaomiClient
 from miloco_sdk.cli.utils import get_auth_info, print_device_list
@@ -131,7 +130,7 @@ async def run():
                 "ffmpeg",
                 "-hide_banner",
                 "-loglevel",
-                "info",
+                "error",
                 "-y",
                 "-fflags",
                 "+igndts",
@@ -140,9 +139,11 @@ async def run():
                 "-use_wallclock_as_timestamps",
                 "1",
                 "-probesize",
-                "2000000",
+                "64",
                 "-analyzeduration",
-                "2000000",
+                "0",
+                "-thread_queue_size",
+                "1024",
                 "-i",
                 "pipe:0",
                 "-use_wallclock_as_timestamps",
@@ -154,9 +155,9 @@ async def run():
                 "-ac",
                 "1",
                 "-probesize",
-                "2000000",
+                "64",
                 "-analyzeduration",
-                "2000000",
+                "0",
                 "-thread_queue_size",
                 "1024",
                 "-i",
@@ -172,7 +173,7 @@ async def run():
                 "-bsf:v",
                 f"setts=dts=N/{INPUT_FPS}/TB:pts=N/{INPUT_FPS}/TB",
                 "-c:a",
-                "aac",  # 强制重新编码为 aac 确保兼容性，如果源是 aac 可以 copy
+                "aac",
                 "-af",
                 "aresample=async=1:first_pts=0",
                 # 输出
