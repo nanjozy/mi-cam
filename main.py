@@ -6,6 +6,7 @@ from miloco_sdk.cli.utils import get_auth_info, print_device_list
 from miot.types import MIoTCameraVideoQuality
 from dotenv import load_dotenv
 import asyncio
+import aiofiles
 
 load_dotenv()
 
@@ -88,9 +89,8 @@ async def run():
         """后台任务：打开音频 FIFO 写端"""
         nonlocal audio_file
         # 这个调用会阻塞直到 ffmpeg 打开读端
-        audio_file = await asyncio.to_thread(
-            lambda: open(audio_fifo, "wb", buffering=0)
-        )
+        audio_file = await aiofiles.open(audio_fifo, "wb", buffering=0)
+
         fifo_ready.set()
         logging.info("音频管道已连接")
 
@@ -101,8 +101,8 @@ async def run():
 
         if audio_file:
             try:
-                audio_file.write(data)
-                audio_file.flush()
+                await audio_file.write(data)
+                await audio_file.flush()
             except BrokenPipeError as e:
                 logging.error(f"音频错误 BrokenPipeError: {e}")
             except Exception as e:
@@ -215,7 +215,7 @@ async def run():
         # 关闭音频文件
         if audio_file:
             try:
-                audio_file.close()
+                await audio_file.close()
             except Exception:
                 pass
 
