@@ -86,7 +86,7 @@ class MIoTCameraStatusF(BaseApi):
             # 获取停止后状态
             status_stopped = await camera_ins.get_status_async()
             # _LOGGER.info("停止后摄像头状态: %s", status_stopped)
-
+            return status_after
 
         except Exception as e:
             _LOGGER.error("测试过程中发生错误: %s", e)
@@ -97,4 +97,4 @@ class MIoTCameraStatusF(BaseApi):
             # _LOGGER.info("清理资源...")
             await miot_camera.destroy_camera_async(did=did)
             # _LOGGER.info("测试完成")
-            return status_after
+            

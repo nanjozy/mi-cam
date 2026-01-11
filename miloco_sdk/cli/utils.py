@@ -2,7 +2,7 @@ import json
 import os
 import time
 import urllib
-from loguru import logger
+
 
 DATA_PATH = os.getenv("DATA_PATH", "./data")
 
@@ -66,19 +66,19 @@ def get_auth_info(client):
 def print_device_list(device_list):
     """打印设备列表"""
 
-    logger.info("\n设备列表:")
+    print("\n设备列表:")
     separator = "-" * 70
-    logger.info(separator)
+    print(separator)
     header = (
         f"{pad_string('序号', 8)}{pad_string('房间', 16)}{pad_string('设备名称', 36)}"
     )
-    logger.info(header)
-    logger.info(separator)
+    print(header)
+    print(separator)
 
     for idx, device in enumerate(device_list, 1):
         room_name = device.get("room_name", "未知")
         device_name = device.get("name", "未知")
         row = f"{pad_string(str(idx), 8)}{pad_string(room_name, 16)}{pad_string(device_name, 36)}"
-        logger.info(row)
+        print(row)
 
-    logger.info(separator)
+    print(separator)

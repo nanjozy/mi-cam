@@ -4,7 +4,6 @@ from miloco_sdk.base import BaseApi
 from miot.client import MIoTClient
 from miloco_sdk.utils.const import MICO_REDIRECT_URI
 from miot.types import MIoTCameraVideoQuality, MIoTOauthInfo
-from loguru import logger
 
 
 class MIoTCameraStream(BaseApi):
@@ -85,13 +84,13 @@ class MIoTCameraStream(BaseApi):
         )
 
     async def wait_for_data(self):
-        logger.info("开始接收摄像头数据...")
+        print("开始接收摄像头数据...")
         try:
             # 挂起主协程，持续接收回调
             while True:
                 await asyncio.sleep(1)
         except KeyboardInterrupt:
-            logger.warning("收到退出信号，正在停止摄像头...")
+            print("收到退出信号，正在停止摄像头...")
         finally:
             # 清理资源
             await self.cleanup()
