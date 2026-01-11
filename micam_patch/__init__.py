@@ -1,2 +1,2 @@
 from .decoder import MIoTMediaDecoder as _
-from .logger import getLogger as __
+from .logger import logging

@@ -1,4 +1,4 @@
-import micam_patch as _
+from micam_patch import logging
 import os
 import time
 from asyncio.subprocess import PIPE, create_subprocess_exec
@@ -68,9 +68,9 @@ async def run():
     )
     if not device_info:
         print_device_list()
-        print(f"设备 '{DEVICE_NAME}' 未在线或未找到")
+        logging.warning(f"设备 '{DEVICE_NAME}' 未在线或未找到")
         return False
-    print(f"找到设备: {device_info['name']} ({device_info['did']})")
+    logging.info(f"找到设备: {device_info['name']} ({device_info['did']})")
     # 创建音频 FIFO
     audio_fifo = os.path.join("./tmp", "camera_audio.fifo")
     try:
@@ -93,7 +93,7 @@ async def run():
             lambda: open(audio_fifo, "wb", buffering=0)
         )
         fifo_ready.set()
-        print("音频管道已连接")
+        logging.info("音频管道已连接")
 
     async def on_decode_pcm(did: str, data: bytes, ts: int, channel: int):
         nonlocal fifo_ready
@@ -105,9 +105,9 @@ async def run():
                 audio_file.write(data)
                 audio_file.flush()
             except BrokenPipeError as e:
-                print(f"音频错误 BrokenPipeError: {e}")
+                logging.error(f"音频错误 BrokenPipeError: {e}")
             except Exception as e:
-                print(f"音频错误: {e}")
+                logging.error(f"音频错误: {e}")
 
     async def on_raw_video(did: str, data: bytes, ts: int, seq: int, channel: int):
         nonlocal ffmpeg_proc, skip_count
@@ -118,12 +118,11 @@ async def run():
         # 等待关键帧并检测 codec
         if ffmpeg_proc is None:
             if is_keyframe(data):
-                print("Keyframe detected! Starting stream...")
+                logging.info("Keyframe detected! Starting stream...")
             else:
                 return
 
-            print(f"codec: {CODEC}，FPS: {INPUT_FPS} 启动 ffmpeg...")
-
+            logging.info(f"codec: {CODEC}，FPS: {INPUT_FPS} 启动 ffmpeg...")
             # 启动打开 FIFO 的任务
             asyncio.create_task(open_audio_fifo())
 
@@ -187,18 +186,18 @@ async def run():
         # 写入视频
         if ffmpeg_proc and ffmpeg_proc.stdin:
             if ffmpeg_proc.stdin.is_closing():
-                print("视频管道已关闭")
+                logging.warning("视频管道已关闭")
                 exit(1)
             try:
                 ffmpeg_proc.stdin.write(data)
                 await ffmpeg_proc.stdin.drain()
             except BrokenPipeError:
-                print("视频 BrokenPipe: FFmpeg 已退出")
+                logging.warning("视频 BrokenPipe: FFmpeg 已退出")
                 ffmpeg_proc = None
             except Exception as e:
-                print(f"视频写入异常: {e}")
+                logging.error(f"视频写入异常: {e}")
 
-    print(f"\n准备推流到: {RTSP_URL}")
+    logging.info(f"\n准备推流到: {RTSP_URL}")
 
     try:
         await client.miot_camera_stream.run_stream(
@@ -210,7 +209,7 @@ async def run():
         )
         await client.miot_camera_stream.wait_for_data()
     except Exception as e:
-        print(f"推流失败，请检查设备与当前程序在同一局域网: {e}")
+        logging.error(f"推流失败，请检查设备与当前程序在同一局域网: {e}")
     finally:
         # 关闭音频文件
         if audio_file:
